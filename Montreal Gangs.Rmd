@@ -1,0 +1,258 @@
+---
+title: "Analysis of Montreal Gang Activity"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(igraph)
+library(devtools)
+library(isnar)
+library(dyads)
+library(ergm)
+```
+
+```{r}
+nett.nodes = read.csv("MONTREALGANG.csv")
+nett.attr = read.csv("sorted_attrs.csv")
+
+#get rid of title
+nett.nodes = nett.nodes[,2:36]
+
+#change NA data to 0 to help with coloring later
+nett.attr$Allegiances[which(nett.attr$Allegiances == 99)] = 0
+nett.attr$Territories[which(nett.attr$Territories == 99)] = 0
+nett.attr$Ethnicity[which(nett.attr$Ethnicity == 99)] = 0
+
+
+#nodes for network of only friendly ties
+friendly_nodes = read.csv("round4/Friendly-Friendly  1.csv")
+friendly_nodes = friendly_nodes[2:36]
+friendly_nodes = friendly_nodes[1:35,]
+
+#nodes for network of only antagonistic ties
+angry_nodes = read.csv("round4/mad-Friendly  1.csv")
+angry_nodes = angry_nodes[2:36]
+angry_nodes = angry_nodes[1:35,]
+```
+
+
+```{r}
+#make full graph
+
+nett.nodes = as.matrix(nett.nodes)
+alll = graph_from_adjacency_matrix(nett.nodes)
+
+V(alll)$name = nett.attr[,1]
+V(alll)$territory = nett.attr$Territories
+V(alll)$ethnicity = nett.attr$Ethnicity
+V(alll)$Allegiances = nett.attr$Allegiances
+```
+
+```{r} 
+#create igraph for positive nodes
+friendly_nodes = as.matrix(friendly_nodes)
+positive = graph_from_adjacency_matrix(friendly_nodes)
+
+V(positive)$name = nett.attr[,1]
+V(positive)$territory = nett.attr$Territories
+V(positive)$ethnicity = nett.attr$Ethnicity
+V(positive)$Allegiances = nett.attr$Allegiances
+```
+
+```{r}
+#create igraph for negitive nodes
+angry_nodes = as.matrix(angry_nodes)
+negative = graph_from_adjacency_matrix(angry_nodes)
+
+V(negative)$name = nett.attr[,1]
+V(negative)$territory = nett.attr$Territories
+V(negative)$ethnicity = nett.attr$Ethnicity
+V(negative)$Allegiances = nett.attr$Allegiances
+```
+
+```{r}
+#trying different plots
+
+cols = c("dark green", "blue", "red", "black", "yellow", "purple")
+
+#negative by allegiance
+plot(negative, vertex.label = NA, vertex.size = 10, 
+     edge.arrow.size = 0.1, main = "Graph of Negative by Allegiance", vertex.color = cols[nett.attr$Allegiances+1],layout = layout_with_kk)
+
+legend(x=-1.1, y=-1.1, c("None","Crips", "Bloods", "Other"), pch=21,
+       col="#777777", pt.bg=cols, pt.cex=2.5, bty="n", ncol=1)
+
+#positive by allegiance
+plot(positive, vertex.label = NA, vertex.size = 10, 
+     edge.arrow.size = 0.1, main = "Graph of Positive by Allegiance", vertex.color = cols[nett.attr$Allegiances+1],layout = layout_with_kk)
+
+legend(x=-1.1, y=-1.1, c("None","Crips", "Bloods", "Other"), pch=21,
+       col="#777777", pt.bg=cols, pt.cex=2.5, bty="n", ncol=1)
+#Full network by ethnicity
+plot(alll, vertex.label = NA, vertex.size = 10, 
+     edge.arrow.size = 0.1, main = "Graph of All by Ethnicity", vertex.color = cols[nett.attr$Ethnicity+1],layout = layout_with_kk)
+
+legend(x=-1.1, y=-1.1, c("None","Hispanic", "Afro-Candian", "Caucasion", "Asian", "Mixed"), pch=21,
+       col="#777777", pt.bg=cols, pt.cex=2.5, bty="n", ncol=1)
+
+
+```
+```{r}
+#table with various descriptive statistics
+degs = c(mean(degree(alll))/2, mean(degree(positive))/2, mean(degree(negative))/2)
+trans = c(transitivity(alll), transitivity(positive), transitivity(negative))
+centrality = c(mean(betweenness(alll)), mean(betweenness(positive)), mean(betweenness(negative)))
+table1 = matrix(c(degs,trans, (centrality)), nrow = 3, byrow = T)
+
+row.names(table1) = c("Average Degree", "Transitivity", "Centrality")
+colnames(table1) = c("Full_Network", "Positive_Network", "Negative_Network")
+table1
+```
+
+
+```{r}
+#more descriptive statistics
+affi = c(ei(alll, "Allegiances"), ei(positive, "Allegiances"),ei(negative, "Allegiances"))
+ethni = c(ei(alll, "ethnicity"), ei(positive, "ethnicity"),ei(negative, "ethnicity"))
+terr = c(ei(alll, "territory"), ei(positive, "territory"),ei(negative, "territory"))
+
+table2 = matrix(c(affi, ethni, terr), nrow = 3, byrow = T)
+
+row.names(table2) = c("Allegiance", "Ethnicity", "Territory")
+colnames(table2) = c("Full_Network", "Positive_Network", "Negative_Network")
+table2
+```
+
+```{r}
+#to run p2 model, need graph as network object, not igraph object
+pos2 = as.network(friendly_nodes)
+pos2%v%"Ethnicity" = nett.attr$Ethnicity
+pos2%v%"Alligiance" = nett.attr$Allegiances
+pos2%v%"Territory" = nett.attr$Territories
+pos2%v%"Name" = nett.attr[,1]
+
+```
+
+```{r}
+#same for negative
+neg2 = as.network(angry_nodes)
+neg2%v%"Ethnicity" = nett.attr$Ethnicity
+neg2%v%"Alligiance" = nett.attr$Allegiances
+neg2%v%"Territory" = nett.attr$Territories
+neg2%v%"Name" = nett.attr[,1]
+
+
+```
+
+```{r}
+#affiliation positive
+Y <- as.matrix(pos2)
+group <- get.vertex.attribute(pos2, "Alligiance")
+sameGroup <- outer(group, group, "==") * 1
+
+res0 <- p2(Y, sender = NULL, receiver = NULL,density = ~ sameGroup,reciprocity= ~ sameGroup)
+
+tab <- cbind(res[,’Estimate’], res[,’SE’],round(res[,’Estimate’] / res[,’SE’], 3))
+
+colnames(tab) <- c(’Estimate’,’SE’, ’z-stat’)
+
+tab
+```
+
+```{r}
+#affiliation negative
+
+Y <- as.matrix(neg2)
+group2 <- get.vertex.attribute(neg2, "Alligiance")
+sameGroup2 <- outer(group, group, "==") * 1
+
+res2 <- p2(Y, sender = NULL, receiver = NULL,density = ~ sameGroup2,reciprocity= ~ sameGroup2)
+
+tab <- cbind(res2[,’Estimate’], res2[,’SE’],round(res2[,’Estimate’] / res[,’SE’], 3))
+
+colnames(tab) <- c(’Estimate’,’SE’, ’z-stat’)
+
+tab
+
+
+```
+
+```{r}
+#needed a clean screenshot for the paper lol
+print("       Positive Alligiance")
+res0
+print("       Negative Alligiance")
+res2
+
+```
+
+Look at same group underneath the density. Negative ties are significantly less likely between groups of the same alligiance. Alligiance interestingly has no effect on positive ties.
+
+```{r}
+#negative by allegiance and ethnicity
+Y <- as.matrix(neg2)
+group <- get.vertex.attribute(neg2, "Alligiance")
+group2 = get.vertex.attribute(neg2, "Ethnicity")
+sameGroup <- outer(group, group, "==") * 1
+sameGroup2 =  outer(group2, group2, "==") * 1
+
+res <- p2(Y, sender = NULL, receiver = NULL,density = ~ sameGroup+ sameGroup2,reciprocity= ~ sameGroup+ sameGroup2)
+
+tab <- cbind(res[,’Estimate’], res[,’SE’],round(res[,’Estimate’] / res[,’SE’], 3))
+
+colnames(tab) <- c(’Estimate’,’SE’, ’z-stat’)
+
+tab
+
+```
+For negitive, after accounting for gang alligance, ethhnicity is significant, barely. Gangs of the same ethnicity are more likely to have a negative relationship with each other after accounting for alligiance. 
+
+```{r}
+#negative by allegiance and territory
+Y <- as.matrix(neg2)
+group <- get.vertex.attribute(neg2, "Alligiance")
+group2 = get.vertex.attribute(neg2, "Territory")
+sameGroup <- outer(group, group, "==") * 1
+sameGroup2 =  outer(group2, group2, "==") * 1
+
+res3 <- p2(Y, sender = NULL, receiver = NULL,density = ~ sameGroup+ sameGroup2,reciprocity= ~ sameGroup+ sameGroup2)
+
+tab <- cbind(res[,’Estimate’], res[,’SE’],round(res[,’Estimate’] / res[,’SE’], 3))
+
+colnames(tab) <- c(’Estimate’,’SE’, ’z-stat’)
+
+tab
+```
+
+```{r}
+
+print("Negative Alligiance and Territory")
+res3
+```
+Gangs in the same territory, fater accounting for gang alligance, are significantly less likely to have negative ties with each other.
+
+
+```{r}
+#trying to see if being part of different allegiances caused more negative ties. 
+Y <- as.matrix(neg2)
+group2 <- get.vertex.attribute(neg2, "Alligiance")
+difGroup2 <- outer(group, group, "!=") * 1
+
+res5 <- p2(Y, sender = NULL, receiver = NULL,density = ~ difGroup2,reciprocity= ~ difGroup2)
+
+tab <- cbind(res2[,’Estimate’], res2[,’SE’],round(res2[,’Estimate’] / res[,’SE’], 3))
+
+colnames(tab) <- c(’Estimate’,’SE’, ’z-stat’)
+
+tab
+```
+
+```{r}
+print("Negative Alligiance and Ethnicity")
+res
+
+```
